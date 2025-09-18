@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deteksi Penyakit Daun - Optimized</title>
+  <!-- Updated TensorFlow.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    
+    .container {
+      background-color: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    h2 {
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .upload-section {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .file-input-wrapper {
+      display: inline-block;
+      position: relative;
+      overflow: hidden;
+      background-color: #3498db;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    
+    .file-input-wrapper:hover {
+      background-color: #2980b9;
+    }
+    
+    .file-input-wrapper input[type=file] {
+      position: absolute;
+      left: -9999px;
+    }
+    
+    #preview {
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      margin: 20px 0;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      max-width: 224px;
+      max-height: 224px;
+    }
+    
+    .btn {
+      background-color: #27ae60;
+      color: white;
+      padding: 12px 30px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+      margin: 10px;
+    }
+    
+    .btn:hover {
+      background-color: #229954;
+    }
+    
+    .btn:disabled {
+      background-color: #bdc3c7;
+      cursor: not-allowed;
+    }
+    
+    #result {
+      background-color: #ecf0f1;
+      padding: 15px;
+      border-radius: 5px;
+      margin-top: 20px;
+      font-weight: bold;
+      min-height: 20px;
+    }
+    
+    .loading {
+      color: #f39c12;
+    }
+    
+    .success {
+      color: #27ae60;
+    }
+    
+    .error {
+      color: #e74c3c;
+    }
+    
+    .status {
+      text-align: center;
+      margin: 10px 0;
+      font-weight: bold;
+    }
+
+    .progress-bar {
+      width: 100%;
+      background-color: #f0f0f0;
+      border-radius: 10px;
+      margin: 10px 0;
+      height: 20px;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: #3498db;
+      width: 0%;
+      transition: width 0.3s ease;
+      border-radius: 10px;
+    }
+
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+      display: none;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>🌿 Deteksi Penyakit Daun</h2>
+    
+    <div class="status" id="modelStatus">📥 Initializing...</div>
+    
+    <div class="progress-bar" id="progressBar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <div class="spinner" id="loadingSpinner"></div>
+    
+    <div class="upload-section">
+      <div class="file-input-wrapper">
+        <input type="file" id="imageUpload" accept="image/*">
+        📤 Upload Gambar Daun
+      </div>
+    </div>
+    
+    <div style="text-align: center;">
+      <img id="preview" style="display:none;">
+    </div>
+    
+    <div style="text-align: center;">
+      <button id="predictBtn" class="btn" disabled>🔍 Analisis Penyakit</button>
+      <button id="clearBtn" class="btn" style="background-color: #e74c3c;" onclick="clearResults()">🗑️ Clear</button>
+    </div>
+    
+    <div id="result">Hasil: Belum ada gambar yang dianalisis</div>
+    
+    <div id="debug" style="display: none; margin-top: 20px; padding: 15px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+      <strong>Debug Info:</strong><br>
+      <div id="debugContent"></div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 10px;">
+      <button id="toggleDebug" class="btn" style="background-color: #6c757d; padding: 8px 16px; font-size: 14px;">
+        Show Debug Info
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    let model = null;
+    let isModelLoading = false;
+    let currentTensor = null;
+
+    const labels = [
+      "Alternaria Leaf Spot",
+      "Bacterial Spot Rot", 
+      "Black Rot",
+      "Cabbage Aphid Colony",
+      "Downy Mildew",
+      "No Disease",
+      "Club Root",
+      "Ring Spot"
+    ];
+
+    // DOM elements
+    const elements = {
+      imageUpload: null,
+      preview: null,
+      predictBtn: null,
+      clearBtn: null,
+      result: null,
+      modelStatus: null,
+      debugDiv: null,
+      debugContent: null,
+      toggleDebugBtn: null,
+      progressBar: null,
+      progressFill: null,
+      loadingSpinner: null
+    };
+
+    // Initialize DOM elements
+    function initElements() {
+      Object.keys(elements).forEach(key => {
+        const id = key === 'clearBtn' ? 'clearBtn' : key;
+        elements[key] = document.getElementById(id);
+      });
+    }
+
+    // Progress update function
+    function updateProgress(percentage, message) {
+      if (elements.progressBar && elements.progressFill) {
+        elements.progressBar.style.display = 'block';
+        elements.progressFill.style.width = percentage + '%';
+        if (elements.modelStatus) {
+          elements.modelStatus.innerHTML = message;
+        }
+      }
+    }
+
+    // Show/hide spinner
+    function toggleSpinner(show) {
+      if (elements.loadingSpinner) {
+        elements.loadingSpinner.style.display = show ? 'block' : 'none';
+      }
+    }
+
+    // Debug functions
+    function addDebugInfo(message) {
+      if (elements.debugContent) {
+        const timestamp = new Date().toLocaleTimeString();
+        elements.debugContent.innerHTML += `[${timestamp}] ${message}<br>`;
+        elements.debugContent.scrollTop = elements.debugContent.scrollHeight;
+      }
+      console.log(message);
+    }
+
+    function clearDebug() {
+      if (elements.debugContent) {
+        elements.debugContent.innerHTML = '';
+      }
+    }
+
+    // Memory cleanup
+    function cleanupTensors() {
+      if (currentTensor) {
+        currentTensor.dispose();
+        currentTensor = null;
+      }
+      // Force garbage collection of GPU memory
+      if (tf && tf.engine) {
+        tf.engine().disposeVariables();
+      }
+    }
+
+    // Clear all results and reset UI
+    function clearResults() {
+      if (elements.preview) {
+        elements.preview.style.display = 'none';
+        elements.preview.src = '';
+      }
+      if (elements.imageUpload) {
+        elements.imageUpload.value = '';
+      }
+      if (elements.result) {
+        elements.result.innerHTML = 'Hasil: Belum ada gambar yang dianalisis';
+      }
+      cleanupTensors();
+      addDebugInfo('🧹 Results cleared and memory cleaned');
+    }
+
+    // Optimized model loading with retry mechanism
+    async function loadModelWithRetry(maxRetries = 3) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          addDebugInfo(`🔄 Loading attempt ${attempt}/${maxRetries}`);
+          updateProgress(20 * attempt, `📥 Loading model (attempt ${attempt}/${maxRetries})...`);
+          
+          // Add timeout for model loading
+          const modelPromise = tf.loadLayersModel("web_model/model.json");
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Model loading timeout')), 30000)
+          );
+          
+          model = await Promise.race([modelPromise, timeoutPromise]);
+          
+          updateProgress(100, "✅ Model loaded successfully!");
+          addDebugInfo("✅ Model loaded successfully");
+          addDebugInfo(`📊 Model input shape: ${JSON.stringify(model.inputs[0].shape)}`);
+          addDebugInfo(`📊 Model output shape: ${JSON.stringify(model.outputs[0].shape)}`);
+          
+          return true;
+          
+        } catch (error) {
+          addDebugInfo(`❌ Attempt ${attempt} failed: ${error.message}`);
+          
+          if (attempt === maxRetries) {
+            throw error;
+          }
+          
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      return false;
+    }
+
+    // Optimized image preprocessing
+    function preprocessImage(imgElement) {
+      return new Promise((resolve, reject) => {
+        try {
+          addDebugInfo("🔄 Starting image preprocessing...");
+          
+          // Create canvas for image processing
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = 224;
+          canvas.height = 224;
+          
+          // Draw and resize image
+          ctx.drawImage(imgElement, 0, 0, 224, 224);
+          
+          // Convert to tensor with proper error handling
+          let tensor = tf.browser.fromPixels(canvas)
+            .toFloat()
+            .div(255.0)
+            .expandDims(0);
+          
+          addDebugInfo(`📊 Preprocessed tensor shape: ${tensor.shape}`);
+          
+          // Clean up canvas
+          canvas.remove();
+          
+          resolve(tensor);
+          
+        } catch (error) {
+          reject(new Error(`Image preprocessing failed: ${error.message}`));
+        }
+      });
+    }
+
+    // Optimized prediction with timeout
+    async function makePrediction() {
+      if (!model) {
+        throw new Error("Model not loaded");
+      }
+
+      if (!elements.preview || !elements.preview.src || elements.preview.style.display === "none") {
+        throw new Error("No image uploaded");
+      }
+
+      try {
+        toggleSpinner(true);
+        addDebugInfo("🔄 Starting prediction...");
+        
+        // Clean up any existing tensors
+        cleanupTensors();
+        
+        // Preprocess image
+        currentTensor = await preprocessImage(elements.preview);
+        
+        // Make prediction with timeout
+        addDebugInfo("🔄 Running model inference...");
+        const predictionPromise = model.predict(currentTensor);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Prediction timeout')), 15000)
+        );
+        
+        const prediction = await Promise.race([predictionPromise, timeoutPromise]);
+        const data = await prediction.data();
+        
+        addDebugInfo(`📊 Raw prediction: ${Array.from(data).slice(0, 3).map(x => x.toFixed(4)).join(', ')}...`);
+        
+        // Process results
+        const maxIndex = data.indexOf(Math.max(...data));
+        const className = labels[maxIndex] || `Class ${maxIndex}`;
+        const confidence = (data[maxIndex] * 100).toFixed(1);
+        
+        addDebugInfo(`🎯 Result: ${className} (${confidence}%)`);
+        
+        // Format results
+        let resultText = `🎯 <strong>Hasil Deteksi:</strong><br>`;
+        resultText += `<strong>Penyakit:</strong> ${className}<br>`;
+        resultText += `<strong>Confidence:</strong> ${confidence}%<br><br>`;
+        
+        // Top 3 predictions
+        const sortedIndices = Array.from(Array(data.length).keys())
+          .sort((a, b) => data[b] - data[a])
+          .slice(0, 3);
+        
+        resultText += `<strong>Top 3 Prediksi:</strong><br>`;
+        sortedIndices.forEach((idx, rank) => {
+          const prob = (data[idx] * 100).toFixed(1);
+          resultText += `${rank + 1}. ${labels[idx]}: ${prob}%<br>`;
+        });
+        
+        elements.result.innerHTML = resultText;
+        
+        // Clean up prediction tensor
+        prediction.dispose();
+        
+      } finally {
+        toggleSpinner(false);
+        cleanupTensors();
+      }
+    }
+
+    // Event handlers
+    function setupEventHandlers() {
+      // Toggle debug
+      if (elements.toggleDebugBtn) {
+        elements.toggleDebugBtn.addEventListener("click", function() {
+          const isHidden = elements.debugDiv.style.display === "none";
+          elements.debugDiv.style.display = isHidden ? "block" : "none";
+          this.textContent = isHidden ? "Hide Debug Info" : "Show Debug Info";
+        });
+      }
+
+      // Image upload
+      if (elements.imageUpload) {
+        elements.imageUpload.addEventListener("change", function() {
+          const file = this.files[0];
+          if (!file) return;
+          
+          // Validation
+          if (!file.type.startsWith('image/')) {
+            alert('Please select an image file!');
+            return;
+          }
+          
+          if (file.size > 10 * 1024 * 1024) { // 10MB limit
+            alert('File too large! Please select an image under 10MB.');
+            return;
+          }
+          
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            elements.preview.src = e.target.result;
+            elements.preview.style.display = "block";
+            elements.result.innerHTML = "Hasil: Gambar berhasil diupload. Klik 'Analisis Penyakit' untuk deteksi.";
+            addDebugInfo(`📷 Image uploaded: ${file.name} (${(file.size/1024).toFixed(1)}KB)`);
+          };
+          reader.onerror = function() {
+            alert('Error reading file!');
+            addDebugInfo('❌ Error reading uploaded file');
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // Predict button
+      if (elements.predictBtn) {
+        elements.predictBtn.addEventListener("click", async function() {
+          if (!model) {
+            alert("Model belum siap! Tunggu hingga model selesai dimuat.");
+            return;
+          }
+
+          try {
+            this.disabled = true;
+            this.innerHTML = "🔄 Analyzing...";
+            elements.result.innerHTML = "🔄 Sedang menganalisis gambar...";
+            
+            await makePrediction();
+            
+          } catch (error) {
+            console.error("Prediction error:", error);
+            elements.result.innerHTML = `❌ <strong>Error:</strong> ${error.message}`;
+            addDebugInfo(`❌ Prediction error: ${error.message}`);
+            
+          } finally {
+            this.disabled = false;
+            this.innerHTML = "🔍 Analisis Penyakit";
+          }
+        });
+      }
+    }
+
+    // Initialize app
+    async function initApp() {
+      try {
+        // Initialize DOM elements
+        initElements();
+        
+        // Setup event handlers
+        setupEventHandlers();
+        
+        // Initialize TensorFlow.js backend
+        addDebugInfo("🔄 Initializing TensorFlow.js...");
+        await tf.ready();
+        addDebugInfo(`✅ TensorFlow.js ready. Backend: ${tf.getBackend()}`);
+        
+        // Load model
+        isModelLoading = true;
+        await loadModelWithRetry();
+        
+        // Enable UI
+        if (elements.predictBtn) {
+          elements.predictBtn.disabled = false;
+        }
+        if (elements.modelStatus) {
+          elements.modelStatus.className = "status success";
+        }
+        if (elements.progressBar) {
+          elements.progressBar.style.display = 'none';
+        }
+        
+        addDebugInfo("🎉 App initialization complete!");
+        
+      } catch (error) {
+        console.error("Initialization error:", error);
+        
+        if (elements.modelStatus) {
+          elements.modelStatus.innerHTML = "❌ Failed to load model";
+          elements.modelStatus.className = "status error";
+        }
+        if (elements.result) {
+          elements.result.innerHTML = `❌ Initialization failed: ${error.message}`;
+        }
+        
+        addDebugInfo(`❌ Initialization error: ${error.message}`);
+        
+        // Provide helpful error messages
+        if (error.message.includes('404')) {
+          elements.result.innerHTML += "<br><br>💡 Pastikan folder 'web_model' dan file model.json ada di lokasi yang sama dengan file HTML ini.";
+        } else if (error.message.includes('fetch')) {
+          elements.result.innerHTML += "<br><br>💡 Jalankan dari web server (bukan file:///). Gunakan Live Server di VS Code atau python -m http.server.";
+        }
+        
+      } finally {
+        isModelLoading = false;
+        if (elements.progressBar) {
+          elements.progressBar.style.display = 'none';
+        }
+      }
+    }
+
+    // Start app when DOM is ready
+    document.addEventListener("DOMContentLoaded", initApp);
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', cleanupTensors);
+  </script>
+</body>
+</html>
